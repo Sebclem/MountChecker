@@ -1,0 +1,11 @@
+[Unit]
+Description=Mount Checker for deluge
+After=systend-user-sessions.service
+
+[Service]
+User=root
+Type=simple
+ExecStart=/opt/mountChecker/mount_checker
+Restart=always
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,150 @@
+#!/bin/bash
+
+# Little script that check if filesystem are mounted and lauch a service if all it's okay.
+# Created for deluged but can be used for all services.
+# Compatible with Gotify for notification (https://gotify.net/).
+
+
+
+
+
+# ========================================================
+#                        Settings
+# ========================================================
+
+
+
+# List of mount point to check.
+# If i want to check if /mnt/drive1 and /mnt/drive2 is mounted:
+# DIR="/media/"
+# MOUNT_NAME=(drive1 drive2)
+DIR="/media/"
+MOUNT_NAME=(blue disque_seb ugreen freebox)
+
+# Name of the controled service
+SERVICE_NAME="deluged"
+
+
+
+# Gotify config, to disable put APPTOKEN=""
+GOTIFY_URL="https://gotify.seb6596.ovh"
+GOTIFY_APPTOKEN="AI7yrsP3SiMtncL"
+GOTIFY_TITLE="Mount Checker"
+GOTIFY_PRIORITY=5
+
+NBR_RETRY=10
+# Time to wait between retry (s)
+RETRY_SLEEP=5
+# Check delay (s)
+CHECK_SLEEP=10
+
+# ========================================================
+#                        
+# ========================================================
+
+
+
+STATE=0
+last_fail_divice=""
+fail_notif_flag=1
+
+function check_mount() {
+    for mount in ${MOUNT_NAME[*]}; do
+        if grep -qs "${DIR}${mount} " /proc/mounts; then
+            if [ $1 ]; then echo "$mount OK"; fi
+        else
+            echo "$mount ERROR"
+            last_fail_divice=${mount}
+            return 1
+        fi
+    done
+    return 0
+}
+
+# $1 message
+function sendPush(){
+    if ! [ -z $GOTIFY_URL ] && ! [ -z $GOTIFY_APPTOKEN ]; then
+        echo "Sending push notification..."
+        curl -s -X POST "${GOTIFY_URL}/message?token=${GOTIFY_APPTOKEN}" -F "title=${GOTIFY_TITLE}" -F "message=$1" -F "priority=${GOTIFY_PRIORITY}"
+        echo
+        echo "Done."
+    fi
+}
+
+function onFail() {
+    echo "============="
+    echo "    Fail     "
+    echo "============="
+    echo "Entering fail mode, stoping service $SERVICE_NAME ..."
+    service $SERVICE_NAME stoping
+    echo "Done."
+    STATE=0
+
+
+}
+
+function onSuccess() {
+    echo "============="
+    echo "   Success   "
+    echo "============="
+    echo "Starting service $SERVICE_NAME ..."
+    service $SERVICE_NAME start
+    echo "Done."
+    if [ $fail_notif_flag -eq 1 ]; then
+         sendPush "All mounts are back up !"
+        fail_notif_flag=0
+    fi
+    
+    STATE=1
+}
+
+function loop() {
+    sleep $CHECK_SLEEP
+    if ! check_mount; then
+        onFail
+    fi
+}
+
+
+function check_mount_loop() {
+    for ((i = 1; i <= $NBR_RETRY; i++)); do
+        echo
+        echo "====================="
+        echo "    Try n°$i / $NBR_RETRY   "
+        echo "====================="
+        echo "Cheking mount point..."
+        if check_mount 1; then
+            onSuccess
+            return
+        else
+            echo "Mount ERROR"
+            if [ $i -ne 1 ]; then
+                echo "Sleep..."
+                sleep $RETRY_SLEEP
+            fi
+            echo "Try \"mount -a\"..."
+            mount -a
+            echo "Done."
+
+        fi
+    done
+    if [ $fail_notif_flag -eq 0 ]; then
+        sendPush "${last_fail_divice} is no mounted after 5 try !"
+        fail_notif_flag=1
+    fi
+    sleep 30
+}
+
+while [ 1 ]; do
+
+    if [ $STATE = 0 ]; then
+        check_mount_loop
+
+    elif [ $STATE = 1 ]; then
+        loop
+    elif [ $STATE = 2 ]; then
+        onFail
+    fi
+
+done
+
